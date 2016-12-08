@@ -56,6 +56,7 @@ class Plugin:
 
         self.methods = PluginMethods(self)
         self.visualizers = PluginVisualizers(self)
+        self.pipelines = PluginPipelines(self)
 
         self.formats = {}
         self.types = {}
@@ -71,6 +72,7 @@ class Plugin:
         actions = {}
         actions.update(self.methods)
         actions.update(self.visualizers)
+        actions.update(self.pipelines)
         return types.MappingProxyType(actions)
 
     def register_formats(self, *formats):
@@ -203,3 +205,14 @@ class PluginVisualizers(PluginActions):
                                                 self._package, name,
                                                 description)
         self[visualizer.id] = visualizer
+
+
+class PluginPipelines(PluginActions):
+    _subpackage = 'pipelines'
+
+    def register_function(self, generator, inputs, parameters, outputs, name,
+                          description):
+        pipeline = qiime.sdk.Pipeline._init(generator, inputs, parameters,
+                                            outputs, self._package, name,
+                                            description)
+        self[pipeline.id] = pipeline

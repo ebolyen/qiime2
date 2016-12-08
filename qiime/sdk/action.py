@@ -22,6 +22,8 @@ from qiime.core.util import LateBindingAttribute, DropFirstParameter, tuplize
 
 class Action(metaclass=abc.ABCMeta):
     type = 'action'
+    # Whether to convert artifacts into a particular view ahead of time.
+    view_conversion = True
 
     __call__ = LateBindingAttribute('_dynamic_call')
     async = LateBindingAttribute('_dynamic_async')
@@ -162,10 +164,13 @@ class Action(metaclass=abc.ABCMeta):
                 provenance.add_parameter(name, spec.qiime_type, parameter)
 
             view_args = parameters.copy()
-            for name, spec in self.signature.inputs.items():
-                recorder = provenance.transformation_recorder(name)
-                view_args[name] = artifacts[name]._view(spec.view_type,
-                                                        recorder)
+            if self.view_conversion:
+                for name, spec in self.signature.inputs.items():
+                    recorder = provenance.transformation_recorder(name)
+                    view_args[name] = artifacts[name]._view(spec.view_type,
+                                                            recorder)
+            else:
+                view_args.update(artifacts)
 
             outputs = self._callable_executor_(self._callable, view_args,
                                                output_types, provenance)
@@ -311,6 +316,15 @@ class Visualizer(Action):
         signature = qtype.VisualizerSignature(callable, inputs, parameters)
         return super()._init(callable, signature, package, name, description)
 
+
+class Pipeline(Action):
+    type = 'pipeline'
+    view_conversion = False
+
+    # Abstract method implementations:
+
+    def _callable_sig_converter_(self, callable):
+        return DropFirstParameter.from_function(callable)
 
 markdown_source_template = """
 ```python
