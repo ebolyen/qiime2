@@ -111,6 +111,13 @@ class TestTypeMap(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'in the same'):
             meta.TypeMap({P: P, Bar: Bar})
 
+    def test_rejects_subtype_after_supertype(self):
+        P = MockPredicate('P')
+        Q = MockPredicate('Q')
+
+        with self.assertRaisesRegex(ValueError, 'more specific'):
+            meta.TypeMap({P: P, P & Q: P & Q})
+
     def test_iter_sorted(self):
         P = MockPredicate('P', alphabetize=True)
         Q = MockPredicate('Q', alphabetize=True)
@@ -199,6 +206,14 @@ class TestTypeMatch(unittest.TestCase):
         T = meta.TypeMatch([P, Q])
 
         self.assertEqual(T.members, (P & Q, P, Q))
+
+    def test_orders_subtype_before_supertype(self):
+        P = MockPredicate('P')
+        Q = MockPredicate('Q')
+
+        T = meta.TypeMatch([P, P & Q])
+
+        self.assertEqual(T.members, (P & Q, P))
 
     def test_variable(self):
         P = MockPredicate('P')
