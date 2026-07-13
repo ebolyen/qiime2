@@ -166,16 +166,20 @@ class TypeMap(ImmutableBase):
                    for k, v in mapping.items()}
         branches = list(mapping)
         for i, a in enumerate(branches):
-            for j in range(i, len(branches)):
+            for j in range(i + 1, len(branches)):
                 b = branches[j]
                 try:
                     intersection = a & b
                 except TypeError:
                     raise ValueError("Cannot place %r and %r in the same "
                                      "type variable." % (a, b))
-                if (intersection.is_bottom()
-                        or intersection is a or intersection is b):
+                if intersection.is_bottom() or intersection is a:
                     continue
+                if intersection is b:
+                    raise ValueError(
+                        "Branch %r is more specific than the earlier branch "
+                        "%r. Move the more specific branch above the less "
+                        "specific branch." % (b.fields, a.fields))
 
                 for k in range(i):
                     if intersection <= branches[k]:
@@ -233,6 +237,21 @@ def _get_intersections(listing):
     return intersections
 
 
+def _sort_narrow_to_broad(listing):
+    sorted_listing = []
+    for member in listing:
+        if member in sorted_listing:
+            continue
+
+        for idx, existing in enumerate(sorted_listing):
+            if member <= existing and not existing <= member:
+                sorted_listing.insert(idx, member)
+                break
+        else:
+            sorted_listing.append(member)
+    return sorted_listing
+
+
 def TypeMatch(listing):
     """A trivial :py:class:`.TypeMap` such that every entry maps to itself.
 
@@ -288,7 +307,8 @@ def TypeMatch(listing):
     while intersections:
         to_add.extend(intersections)
         intersections = _get_intersections(intersections)
-    mapping = TypeMap({x: x for x in list(reversed(to_add)) + listing})
+    listing = _sort_narrow_to_broad(list(reversed(to_add)) + listing)
+    mapping = TypeMap({x: x for x in listing})
     # TypeMatch only produces a single variable
     # iter_outputs is used by match for solving, so the index must match
     return next(iter(mapping.iter_outputs(_double_as_input=True)))
