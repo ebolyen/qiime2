@@ -18,7 +18,7 @@ requirements:
   - pandas {{ pandas }}
   - tzlocal {{ tzlocal }}
   - python-dateutil
-  - bibtexparser
+  - bibtexparser {{ bibtexparser }}
   - networkx {{ networkx }}
   - dill
   - psutil
