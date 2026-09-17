@@ -25,7 +25,7 @@ class IContext(metaclass=abc.ABCMeta):
         """
 
     @abc.abstractmethod
-    def make_report(self, template, collection):
+    def make_report(self, template, collection, descriptions=None):
         """Create a report based on a template and a collection of
-            visualizations
+        visualizations, with optional descriptions.
         """

@@ -407,6 +407,12 @@ class TestMakeReport(unittest.TestCase):
         most_common_res = self.plugin.visualizers['most_common_viz'](ints_art)
         self.viz2 = most_common_res[0]
 
+        def template(destination, index):
+            with open(os.path.join(destination, 'index.html'), 'w') as fh:
+                fh.write('<html><body>Report</body></html>')
+
+        self.template = template
+
     def tearDown(self):
         self.test_dir.cleanup()
 
@@ -421,7 +427,10 @@ class TestMakeReport(unittest.TestCase):
                 fh.write('<html><body>Report</body></html>')
 
         collection = {'first': self.viz1, 'second': self.viz2}
-        report_viz = Visualization.make_report(template, collection)
+        report_viz = Visualization.make_report(
+            template,
+            collection,
+            descriptions={'first': 'A description for the first plot.'})
         res_dir = str(report_viz._archiver.path)
 
         # verify index.html at top level and subfigures index.json
@@ -441,15 +450,17 @@ class TestMakeReport(unittest.TestCase):
         # Assert that the template recieved the same index as what was written
         self.assertEqual(json_index, template_index)
 
+        self.assertEqual(json_index['first']['description'],
+                         'A description for the first plot.')
+        self.assertNotIn('description', json_index['second'])
+
     def test_make_report_nested_hoist(self):
         # create an inner report from viz2 alone
         # create visualization via dummy plugin
-        def inner_template(destination, index):
-            with open(os.path.join(destination, 'index.html'), 'w') as fh:
-                fh.write('<html><body>Inner</body></html>')
-
         inner_report = Visualization.make_report(
-            inner_template, {'inner': self.viz2})
+            self.template,
+            {'inner': self.viz2},
+            descriptions={'inner': 'A nested leaf description.'})
         inner_path = inner_report._archiver.path
 
         # inner report will have two entries in subfigures, index and viz2
@@ -458,13 +469,12 @@ class TestMakeReport(unittest.TestCase):
             {'index.json', str(self.viz2.uuid)}
         )
 
-        def outer_template(destination, index):
-            with open(os.path.join(destination, 'index.html'), 'w') as fh:
-                fh.write('<html><body>Outer</body></html>')
-
         # outer report contains a visualization and a report
         collection = {'first': self.viz1, 'nested': inner_report}
-        outer_report = Visualization.make_report(outer_template, collection)
+        outer_report = Visualization.make_report(
+            self.template,
+            collection,
+            descriptions={'nested': 'A description for the nested report.'})
         res_dir = outer_report._archiver.path
 
         subfigures_dir = os.path.join(res_dir, 'data', 'subfigures')
@@ -497,7 +507,30 @@ class TestMakeReport(unittest.TestCase):
         self.assertEqual(inner_index['inner']['index'],
                          # the base dir has been updated to the parent dir
                          f'../{str(self.viz2.uuid)}/index.html')
+        self.assertEqual(inner_index['inner']['description'],
+                         'A nested leaf description.')
+        self.assertEqual(json_index['nested']['description'],
+                         'A description for the nested report.')
 
+    def test_make_report_rejects_unknown_description(self):
+        with self.assertRaisesRegex(ValueError, 'not in the collection'):
+            Visualization.make_report(
+                self.template,
+                {'first': self.viz1},
+                descriptions={'missing': 'This visualization does not exist.'})
+
+    def test_make_report_rejects_non_text_description(self):
+        with self.assertRaisesRegex(TypeError, 'must be plain text'):
+            Visualization.make_report(
+                self.template,
+                {'first': self.viz1},
+                descriptions={'first': ['This is not plain text.']})
+
+    def test_make_report_without_descriptions(self):
+        report = Visualization.make_report(
+            self.template, {'first': self.viz1})
+
+        self.assertIsInstance(report, Visualization)
 
 if __name__ == '__main__':
     unittest.main()

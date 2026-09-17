@@ -164,10 +164,15 @@ class Context(IContext):
         self.add_reference(artifact)
         return artifact
 
-    def make_report(self, template, collection):
+    def make_report(self, template, collection, descriptions=None):
+        """Create a report from visualizations and descriptions.
+
+        Descriptions are plain text with the same keys as the collection.
+        """
         viz = rachis.sdk.Visualization.make_report(
             # wait for any proxies via .result()
-            template, {k: v.result() for k, v in collection.items()})
+            template, {k: v.result() for k, v in collection.items()},
+            descriptions=descriptions)
         self.add_reference(viz)
         return viz
 

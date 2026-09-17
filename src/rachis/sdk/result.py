@@ -553,7 +553,7 @@ class Visualization(Result):
         return viz
 
     @classmethod
-    def make_report(cls, template, collection):
+    def make_report(cls, template, collection, descriptions=None):
         """Make a report out of existing visualizations and a template.
 
         Parameters
@@ -567,6 +567,10 @@ class Visualization(Result):
             to the template to use them, but they will exist in a specialized
             subfigures directory unique to the report format for Visualization.
 
+        descriptions : dict[str, str], optional
+            Plain-text descriptions for report entries, keyed by their names
+            in ``collection``.
+
         Returns
         -------
         Visualization
@@ -574,6 +578,15 @@ class Visualization(Result):
             format of "report".
 
         """
+        if descriptions is None:
+            descriptions = {}
+
+        unknown_descriptions = descriptions.keys() - collection.keys()
+        if unknown_descriptions:
+            raise ValueError(
+                'Descriptions were provided for visualizations not in the '
+                f'collection: {sorted(unknown_descriptions)!r}')
+
         provenance_capture = archive.ReportProvenanceCapture()
         to_reindex = {}
 
@@ -581,12 +594,19 @@ class Visualization(Result):
             index = {}
             subfigures_dir = os.path.join(destination, 'subfigures')
             for key, viz in collection.items():
+                if key in descriptions and not isinstance(descriptions[key],
+                                                          str):
+                    raise TypeError(
+                        f'Description for {key!r} must be plain text.')
+
                 viz_uuid = str(viz.uuid)
                 provenance_capture.add_input(key, viz)
                 index[key] = {
                     "name": key,
                     "index": f'subfigures/{viz_uuid}/index.html',
                 }
+                if key in descriptions:
+                    index[key]['description'] = descriptions[key]
                 subfigure_root = os.path.join(subfigures_dir, viz_uuid)
                 if not os.path.exists(subfigure_root):
                     shutil.copytree(viz._archiver.data_dir, subfigure_root)
