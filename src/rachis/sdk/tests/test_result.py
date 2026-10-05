@@ -683,6 +683,12 @@ class TestResultCollection(unittest.TestCase):
                             "order file but does not exist"):
             ResultCollection.load(self.output_fp)
 
+    def test_iter(self):
+        self.assertEqual(list(self.collection), ['foo', 'bar'])
+        self.assertEqual(
+            list(self.collection), list(self.collection.collection)
+        )
+
     def test_collection_non_str_keys(self):
         with self.assertRaisesRegex(
                 KeyError, 'ResultCollection keys must be strings and may only '
