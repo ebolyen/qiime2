@@ -32,9 +32,12 @@ from ..cite import Citations
 
 
 def manifest_bytes(digests):
+    """Serialize newly generated manifests in deterministic path order."""
     return (
         (
-            "\n".join(to_checksum_format(p, h) for p, h in digests.items())
+            "\n".join(
+                to_checksum_format(p, h) for p, h in sorted(digests.items())
+            )
             + "\n"
         ).encode()
         if digests
@@ -446,10 +449,9 @@ class _ArchiveSealer:
                 if (node_id, relative) in self.whiteouts:
                     digest = hashlib.sha512(b"").hexdigest()
                 extended[name] = digest
-        self.hashes["sha512"] = extended
-        self.manifests["sha512"] = manifest_bytes(
-            dict(sorted(extended.items()))
-        )
+        if extended != self.hashes["sha512"]:
+            self.hashes["sha512"] = extended
+            self.manifests["sha512"] = manifest_bytes(extended)
 
     def _prepare_annotations(self):
         if (self.root / "annotations").exists():

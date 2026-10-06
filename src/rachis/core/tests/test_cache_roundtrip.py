@@ -4,6 +4,7 @@
 # ----------------------------------------------------------------------------
 """Preserve source archive contents across each supported cache route."""
 
+import hashlib
 from pathlib import Path
 import subprocess
 import zipfile
@@ -30,23 +31,39 @@ def archive_contents(path):
 
 @pytest.fixture
 def stub_signing(monkeypatch):
-    """Exercise Signature storage without depending on a private GPG key."""
+    """Check the exact signed bytes without depending on a private GPG key."""
     import rachis.core.annotate as annotate
+    import rachis.core.archive.archiver as archiver
 
-    monkeypatch.setattr(annotate, "gpg_find_key", lambda fingerprint: {
-        "fingerprint": fingerprint,
-        "algorithm": "Ed25519",
-        "length": 0,
-        "curve": "ed25519",
-        "chosen_uid": {"name": "Roundtrip Test", "email": "test@example.com"},
-    })
+    def find_key(fingerprint):
+        return {
+            "fingerprint": fingerprint,
+            "algorithm": "Ed25519",
+            "length": 0,
+            "curve": "ed25519",
+            "chosen_uid": {
+                "name": "Roundtrip Test", "email": "test@example.com",
+            },
+        }
+
+    monkeypatch.setattr(annotate, "gpg_find_key", find_key)
+    monkeypatch.setattr(archiver, "gpg_find_key", find_key)
     original_run = subprocess.run
+
+    def signature_bytes(path):
+        return b"roundtrip signature\x00\xff" + hashlib.sha512(
+            Path(path).read_bytes()
+        ).digest()
 
     def run(command, *args, **kwargs):
         if command[0] == "gpg":
             if "--detach-sign" in command:
                 output = Path(command[command.index("--output") + 1])
-                output.write_bytes(b"roundtrip signature\x00\xff")
+                output.write_bytes(signature_bytes(command[-1]))
+            elif "--verify" in command:
+                assert Path(command[-2]).read_bytes() == signature_bytes(
+                    command[-1]
+                ), "verification must use the exact originally signed bytes"
             return subprocess.CompletedProcess(command, 0, "", "")
         return original_run(command, *args, **kwargs)
 
@@ -73,6 +90,12 @@ def source_archive(request, tmp_path, stub_signing, monkeypatch):
         monkeypatch.setattr(Archiver, "CURRENT_FORMAT_VERSION", "7.1")
         with CacheV1(tmp_path / "source-cache"):
             result = Artifact.import_data(IntSequence1, [1, 2, 3])
+            # Preserve valid historical formatting rather than normalizing it
+            # during import, signing, materialization, or cache transfers.
+            manifest = result._archiver.root_dir / "checksums.sha512"
+            manifest.write_bytes(b"\r\n".join(
+                reversed(manifest.read_bytes().splitlines())
+            ) + b"\r\n")
             result.add_annotation(Note("note", text="preserve this note"))
             result.add_annotation(Signature(
                 "signature",
@@ -126,10 +149,78 @@ def test_archive_roundtrip_cache_routes(source_archive, route, tmp_path):
                 assert result.get_annotation("note").contents == (
                     "preserve this note"
                 )
-                assert result.get_annotation("signature").annotation_type == (
-                    "Signature"
+                signature = result.get_annotation("signature")
+                assert signature.annotation_type == "Signature"
+                assert signature.checksum_digest == hashlib.sha512(
+                    expected_members["checksums.sha512"]
+                ).hexdigest()
+                assert result.verify("signature") == (
+                    "Signature `signature` verified successfully."
                 )
     finally:
         for cache in reversed(caches):
             if isinstance(cache, CacheV2):
                 cache.close()
+
+
+def test_v2_signature_signs_exported_manifest(
+    tmp_path, stub_signing, monkeypatch,
+):
+    from rachis.core.archive import archiver_v2
+    from rachis.core.util import from_checksum_format
+
+    original_files = archiver_v2._files
+    monkeypatch.setattr(archiver_v2, "_files", lambda path: dict(sorted(
+        original_files(path).items(), reverse=True
+    )))
+    cache = CacheV2(tmp_path / "cache")
+    try:
+        with cache:
+            result = Artifact.import_data(IntSequence1, [1, 2, 3])
+            result.add_annotation(Signature(
+                "signature",
+                fingerprint="ABCDEF0123456789ABCDEF0123456789ABCDEF01",
+            ))
+            result.add_annotation(Note("note", text="added after signing"))
+        exported = tmp_path / "signed.qza"
+        result.save(exported)
+        _, members = archive_contents(exported)
+        signature = result.get_annotation("signature")
+        assert signature.checksum_digest == hashlib.sha512(
+            members["checksums.sha512"]
+        ).hexdigest()
+        assert result.verify("signature") == (
+            "Signature `signature` verified successfully."
+        )
+        for annotation in result.iter_annotations():
+            manifest = members[
+                f"annotations/{annotation.id}/checksums.sha512"
+            ]
+            entries = [from_checksum_format(line)
+                       for line in manifest.decode().splitlines()]
+            assert entries == sorted(entries)
+    finally:
+        cache.close()
+
+
+@pytest.mark.parametrize("source_archive", ["7.1"], indirect=True)
+def test_signature_detects_manifest_reordering(source_archive, tmp_path):
+    source, _ = source_archive
+    identity, members = archive_contents(source)
+    members["checksums.sha512"] = b"\n".join(
+        reversed(members["checksums.sha512"].splitlines())
+    ) + b"\n"
+    reordered = tmp_path / "reordered.qza"
+    with zipfile.ZipFile(reordered, "w") as archive:
+        for name, data in members.items():
+            archive.writestr(identity + "/" + name, data)
+    cache = CacheV2(tmp_path / "cache")
+    try:
+        with cache:
+            result = Artifact.load(reordered)
+        # Per-file hashes still agree; only the signed manifest bytes changed.
+        result.validate(level="max")
+        with pytest.raises(ValueError, match="does not match digest"):
+            result.verify("signature")
+    finally:
+        cache.close()
